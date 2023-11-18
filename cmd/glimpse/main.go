@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -277,7 +278,12 @@ func handleConnection(conn net.Conn) {
 }
 
 func main() {
-	ln, err := net.Listen("tcp", ":1080")
+	var bindAddr string
+	flag.StringVar(&bindAddr, "b", ":1080", "Address to bind to")
+
+	flag.Parse()
+
+	ln, err := net.Listen("tcp", bindAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
