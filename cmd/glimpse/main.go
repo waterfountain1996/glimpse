@@ -12,54 +12,13 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/waterfountain1996/glimpse/internal/socks"
 )
-
-const SocksProtoVersion uint8 = 5
-
-type SocksAuth uint8
-
-const (
-	SocksAuthNone     SocksAuth = 0
-	SocksAuthGssapi   SocksAuth = 1
-	SocksAuthPassword SocksAuth = 2
-	SocksAuthInvalid  SocksAuth = 0xFF
-)
-
-type SocksCmd uint8
-
-const (
-	SocksCmdConnect      SocksCmd = 1
-	SocksCmdBind         SocksCmd = 2
-	SocksCmdUDPAssociate SocksCmd = 3
-)
-
-type SocksAtyp uint8
-
-const (
-	SocksAtypIP4    SocksAtyp = 1
-	SocksAtypDomain SocksAtyp = 3
-	SocksAtypIP6    SocksAtyp = 4
-)
-
-type SocksReply uint8
-
-const (
-	SocksReplySuccess          SocksReply = 0
-	SocksReplyError            SocksReply = 1
-	SocksReplyForbidden        SocksReply = 2
-	SocksReplyNetUnreachable   SocksReply = 3
-	SocksReplyHostUnreachable  SocksReply = 4
-	SocksReplyRefused          SocksReply = 5
-	SocksReplyExpired          SocksReply = 6
-	SocksReplyCmdNotSupported  SocksReply = 7
-	SocksReplyAtypNotSupported SocksReply = 8
-)
-
-var PayloadTooShort = errors.New("Payload too short")
 
 type SocksRequest struct {
-	cmd     SocksCmd
-	atyp    SocksAtyp
+	cmd     socks.Cmd
+	atyp    socks.Atyp
 	dstAddr string
 	dstPort uint16
 }
@@ -67,19 +26,19 @@ type SocksRequest struct {
 func (r *SocksRequest) String() string {
 	var cmdString string
 	switch r.cmd {
-	case SocksCmdConnect:
+	case socks.CmdConnect:
 		cmdString = "CONNECT"
-	case SocksCmdBind:
+	case socks.CmdBind:
 		cmdString = "BIND"
-	case SocksCmdUDPAssociate:
+	case socks.CmdUDPAssociate:
 		cmdString = "UDP ASSOCIATE"
 	}
 	return fmt.Sprintf("%v to %v:%v", cmdString, r.dstAddr, r.dstPort)
 }
 
 type SocksResponse struct {
-	reply   SocksReply
-	atyp    SocksAtyp
+	reply   socks.Reply
+	atyp    socks.Atyp
 	bndAddr string
 	bndPort uint16
 }
@@ -87,7 +46,7 @@ type SocksResponse struct {
 func (r *SocksResponse) AsSlice() []byte {
 	addr, _ := netip.ParseAddr(r.bndAddr)
 	slice := []byte{
-		SocksProtoVersion,
+		socks.Version,
 		byte(r.reply),
 		0x0, // RSV
 		byte(r.atyp),
@@ -97,10 +56,10 @@ func (r *SocksResponse) AsSlice() []byte {
 	return slice
 }
 
-func NewErrorResponse(reply SocksReply) *SocksResponse {
+func NewErrorResponse(reply socks.Reply) *SocksResponse {
 	return &SocksResponse{
 		reply:   reply,
-		atyp:    SocksAtypIP4,
+		atyp:    socks.AtypIP4,
 		bndAddr: "0.0.0.0",
 		bndPort: 0,
 	}
@@ -121,14 +80,14 @@ func WithTimeout(f func() error, timeout time.Duration) error {
 	}
 }
 
-func handleAuth(conn net.Conn, methods []SocksAuth) error {
+func handleAuth(conn net.Conn, methods []socks.AuthMethod) error {
 	r := bufio.NewReader(conn)
 
 	// Read protocol version
 	b, err := r.ReadByte()
 	if err != nil {
 		return err
-	} else if b != SocksProtoVersion {
+	} else if b != socks.Version {
 		return errors.New(fmt.Sprintf("Invalid SOCKS version: %v", b))
 	}
 
@@ -152,21 +111,21 @@ func handleAuth(conn net.Conn, methods []SocksAuth) error {
 		return err
 	}
 
-	selectedMethod := SocksAuthInvalid
+	selectedMethod := socks.AuthInvalid
 	for _, rawMethod := range clientMethods {
-		method := SocksAuth(rawMethod)
+		method := socks.AuthMethod(rawMethod)
 		if slices.Contains(methods, method) {
-			selectedMethod = SocksAuth(method)
+			selectedMethod = method
 			break
 		}
 	}
 
-	_, err = conn.Write([]byte{SocksProtoVersion, byte(selectedMethod)})
+	_, err = conn.Write([]byte{socks.Version, byte(selectedMethod)})
 	if err != nil {
 		return err
 	}
 
-	if selectedMethod == SocksAuthInvalid {
+	if selectedMethod == socks.AuthInvalid {
 		conn.Close()
 	}
 
@@ -182,25 +141,25 @@ func readRequest(conn net.Conn) (*SocksRequest, error) {
 		return nil, err
 	}
 
-	ver, cmd, atyp := b[0], SocksCmd(b[1]), SocksAtyp(b[3])
-	if ver != SocksProtoVersion {
+	ver, cmd, atyp := b[0], socks.Cmd(b[1]), socks.Atyp(b[3])
+	if ver != socks.Version {
 		return nil, errors.New(fmt.Sprintf("Invalid SOCKS version: %v", b))
 	}
 
 	var dstAddr string
 
 	switch atyp {
-	case SocksAtypIP4:
+	case socks.AtypIP4:
 		fallthrough
-	case SocksAtypIP6:
-		b = slices.Grow(b, int(atyp * 4))
+	case socks.AtypIP6:
+		b = slices.Grow(b, int(atyp*4))
 		_, err := io.ReadFull(r, b)
 		if err != nil {
 			return nil, err
 		}
 		addr, _ := netip.AddrFromSlice(b)
 		dstAddr = addr.String()
-	case SocksAtypDomain:
+	case socks.AtypDomain:
 		length, err := r.ReadByte()
 		if err != nil {
 			return nil, err
@@ -225,8 +184,8 @@ func readRequest(conn net.Conn) (*SocksRequest, error) {
 	dstPort := binary.BigEndian.Uint16(b)
 
 	return &SocksRequest{
-		cmd: cmd,
-		atyp: atyp,
+		cmd:     cmd,
+		atyp:    atyp,
 		dstAddr: dstAddr,
 		dstPort: dstPort,
 	}, nil
@@ -236,9 +195,9 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 	log.Printf("Handling %v", req.String())
 	var res SocksResponse
 
-	if req.cmd != SocksCmdConnect {
+	if req.cmd != socks.CmdConnect {
 		log.Printf("Here")
-		res = *NewErrorResponse(SocksReplyCmdNotSupported)
+		res = *NewErrorResponse(socks.ReplyCmdNotSupported)
 		conn.Write(res.AsSlice())
 		conn.Close()
 	}
@@ -254,8 +213,8 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 	addrPort, _ := netip.ParseAddrPort(remote.LocalAddr().String())
 
 	res = SocksResponse{
-		reply: SocksReplySuccess,
-		atyp: SocksAtypIP4,
+		reply:   socks.ReplySuccess,
+		atyp:    socks.AtypIP4,
 		bndAddr: addrPort.Addr().String(),
 		bndPort: addrPort.Port(),
 	}
@@ -300,7 +259,7 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 }
 
 func handleConnection(conn net.Conn) {
-	err := handleAuth(conn, []SocksAuth{SocksAuthNone})
+	err := handleAuth(conn, []socks.AuthMethod{socks.AuthNone})
 	if err != nil {
 		log.Printf("Failed to handle auth: %v", err)
 		conn.Close()
