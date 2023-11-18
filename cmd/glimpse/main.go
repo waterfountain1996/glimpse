@@ -208,6 +208,7 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 		log.Printf("Failed to connect to remove addr: %v", err)
 		conn.Close()
 	}
+	defer remote.Close()
 
 	log.Printf("Connected to %v", remote.RemoteAddr().String())
 
@@ -260,6 +261,8 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 }
 
 func handleConnection(conn net.Conn) {
+	defer conn.Close()
+
 	err := handleAuth(conn, []socks.AuthMethod{socks.AuthNone})
 	if err != nil {
 		log.Printf("Failed to handle auth: %v", err)
