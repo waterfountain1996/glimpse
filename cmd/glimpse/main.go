@@ -212,10 +212,14 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 	log.Printf("Connected to %v", remote.RemoteAddr().String())
 
 	addrPort, _ := netip.ParseAddrPort(remote.LocalAddr().String())
+	atyp := socks.AtypIP4
+	if addrPort.Addr().Is6() {
+		atyp = socks.AtypIP6
+	}
 
 	res = SocksResponse{
 		reply:   socks.ReplySuccess,
-		atyp:    socks.AtypIP4,
+		atyp:    atyp,
 		bndAddr: addrPort.Addr().String(),
 		bndPort: addrPort.Port(),
 	}
