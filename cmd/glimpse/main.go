@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/netip"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/waterfountain1996/glimpse/internal/socks"
@@ -227,37 +226,35 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 		return
 	}
 
-	var wg sync.WaitGroup
+	errCh := make(chan error)
 
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
-		r := bufio.NewReader(remote)
-		w := bufio.NewWriter(conn)
-		for {
-			_, err := r.WriteTo(w)
-			if err != nil {
-				log.Printf("proxy error: %v", err)
-				return
-			}
-		}
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
 		r := bufio.NewReader(conn)
-		w := bufio.NewWriter(remote)
-		for {
-			_, err := r.WriteTo(w)
-			if err != nil {
-				log.Printf("proxy error: %v", err)
-				return
-			}
+		b := make([]byte, 4096)
+		_, err := io.CopyBuffer(remote, r, b)
+		if err != nil {
+			errCh <- err
 		}
 	}()
 
-	wg.Wait()
+	go func() {
+		r := bufio.NewReader(remote)
+		b := make([]byte, 4096)
+		_, err := io.CopyBuffer(conn, r, b)
+		if err != nil {
+			errCh <- err
+		}
+	}()
+
+	for i := 0; i < 2; i++ {
+		err := <-errCh
+		if err != nil {
+			log.Printf("proxy error: %v", err)
+			break
+		}
+	}
+
+	log.Printf("%v finished", req)
 }
 
 func handleConnection(conn net.Conn) {
