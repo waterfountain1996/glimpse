@@ -36,33 +36,23 @@ func (r *SocksRequest) String() string {
 	return fmt.Sprintf("%v to %v:%v", cmdString, r.dstAddr, r.dstPort)
 }
 
-type SocksResponse struct {
-	reply   socks.Reply
-	atyp    socks.Atyp
-	bndAddr string
-	bndPort uint16
+func sendReply(conn net.Conn, r socks.Reply, bndAddr netip.AddrPort) error {
+	atyp := socks.AtypIP4
+	if bndAddr.Addr().Is6() {
+		atyp = socks.AtypIP6
+	}
+
+	b := []byte{socks.Version, byte(r), 0, byte(atyp)}
+	b = append(b, bndAddr.Addr().AsSlice()...)
+	b = binary.BigEndian.AppendUint16(b, bndAddr.Port())
+
+	_, err := conn.Write(b)
+	return err
 }
 
-func (r *SocksResponse) AsSlice() []byte {
-	addr, _ := netip.ParseAddr(r.bndAddr)
-	slice := []byte{
-		socks.Version,
-		byte(r.reply),
-		0x0, // RSV
-		byte(r.atyp),
-	}
-	slice = append(slice, addr.AsSlice()...)
-	slice = binary.BigEndian.AppendUint16(slice, r.bndPort)
-	return slice
-}
-
-func NewErrorResponse(reply socks.Reply) *SocksResponse {
-	return &SocksResponse{
-		reply:   reply,
-		atyp:    socks.AtypIP4,
-		bndAddr: "0.0.0.0",
-		bndPort: 0,
-	}
+func sendErrorReply(conn net.Conn, r socks.Reply) error {
+	addr, _ := netip.ParseAddrPort("0.0.0.0:0")
+	return sendReply(conn, r, addr)
 }
 
 func WithTimeout(f func() error, timeout time.Duration) error {
@@ -193,12 +183,14 @@ func readRequest(conn net.Conn) (*SocksRequest, error) {
 
 func handleRequest(conn net.Conn, req *SocksRequest) {
 	log.Printf("Handling %v", req.String())
-	var res SocksResponse
 
 	if req.cmd != socks.CmdConnect {
 		log.Printf("Here")
-		res = *NewErrorResponse(socks.ReplyCmdNotSupported)
-		conn.Write(res.AsSlice())
+		err := sendErrorReply(conn, socks.ReplyCmdNotSupported)
+		if err != nil {
+			log.Printf("error sending reply: %v", err)
+		}
+
 		conn.Close()
 	}
 
@@ -212,18 +204,7 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 	log.Printf("Connected to %v", remote.RemoteAddr().String())
 
 	addrPort, _ := netip.ParseAddrPort(remote.LocalAddr().String())
-	atyp := socks.AtypIP4
-	if addrPort.Addr().Is6() {
-		atyp = socks.AtypIP6
-	}
-
-	res = SocksResponse{
-		reply:   socks.ReplySuccess,
-		atyp:    atyp,
-		bndAddr: addrPort.Addr().String(),
-		bndPort: addrPort.Port(),
-	}
-	_, err = conn.Write(res.AsSlice())
+	err = sendReply(conn, socks.ReplySuccess, addrPort)
 	if err != nil {
 		log.Printf("Error writing response: %v", err)
 		conn.Close()
