@@ -55,6 +55,12 @@ func sendErrorReply(conn net.Conn, r socks.Reply) error {
 	return sendReply(conn, r, addr)
 }
 
+func proxy(r io.Reader, w io.Writer) error {
+	b := make([]byte, 4096)
+	_, err := io.CopyBuffer(w, r, b)
+	return err
+}
+
 func WithTimeout(f func() error, timeout time.Duration) error {
 	result := make(chan error, 1)
 
@@ -212,24 +218,8 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 	}
 
 	errCh := make(chan error)
-
-	go func() {
-		r := bufio.NewReader(conn)
-		b := make([]byte, 4096)
-		_, err := io.CopyBuffer(remote, r, b)
-		if err != nil {
-			errCh <- err
-		}
-	}()
-
-	go func() {
-		r := bufio.NewReader(remote)
-		b := make([]byte, 4096)
-		_, err := io.CopyBuffer(conn, r, b)
-		if err != nil {
-			errCh <- err
-		}
-	}()
+	go func() { errCh <- proxy(bufio.NewReader(conn), remote) }()
+	go func() { errCh <- proxy(bufio.NewReader(remote), conn) }()
 
 	for i := 0; i < 2; i++ {
 		err := <-errCh
