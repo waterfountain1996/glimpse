@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,51 +12,9 @@ import (
 	"slices"
 	"time"
 
+	"github.com/waterfountain1996/glimpse/internal/glimpse"
 	"github.com/waterfountain1996/glimpse/internal/socks"
 )
-
-type SocksRequest struct {
-	cmd     socks.Cmd
-	atyp    socks.Atyp
-	dstAddr string
-	dstPort uint16
-}
-
-func (r *SocksRequest) String() string {
-	var cmdString string
-	switch r.cmd {
-	case socks.CmdConnect:
-		cmdString = "CONNECT"
-	case socks.CmdBind:
-		cmdString = "BIND"
-	case socks.CmdUDPAssociate:
-		cmdString = "UDP ASSOCIATE"
-	}
-	return fmt.Sprintf("%v to %v", cmdString, r.AddrPort())
-}
-
-func (r *SocksRequest) AddrPort() string {
-	return fmt.Sprintf("%v:%v", r.dstAddr, r.dstPort)
-}
-
-func sendReply(conn net.Conn, r socks.Reply, bndAddr netip.AddrPort) error {
-	atyp := socks.AtypIP4
-	if bndAddr.Addr().Is6() {
-		atyp = socks.AtypIP6
-	}
-
-	b := []byte{socks.Version, byte(r), 0, byte(atyp)}
-	b = append(b, bndAddr.Addr().AsSlice()...)
-	b = binary.BigEndian.AppendUint16(b, bndAddr.Port())
-
-	_, err := conn.Write(b)
-	return err
-}
-
-func sendErrorReply(conn net.Conn, r socks.Reply) error {
-	addr, _ := netip.ParseAddrPort("0.0.0.0:0")
-	return sendReply(conn, r, addr)
-}
 
 func proxy(r io.Reader, w io.Writer) error {
 	b := make([]byte, 4096)
@@ -132,71 +89,11 @@ func handleAuth(conn net.Conn, methods []socks.AuthMethod) error {
 	return nil
 }
 
-func readRequest(conn net.Conn) (*SocksRequest, error) {
-	r := bufio.NewReader(conn)
-
-	b := make([]byte, 4)
-	_, err := io.ReadFull(r, b)
-	if err != nil {
-		return nil, err
-	}
-
-	ver, cmd, atyp := b[0], socks.Cmd(b[1]), socks.Atyp(b[3])
-	if ver != socks.Version {
-		return nil, fmt.Errorf("Invalid SOCKS version: %v", b)
-	}
-
-	var dstAddr string
-
-	switch atyp {
-	case socks.AtypIP4:
-		fallthrough
-	case socks.AtypIP6:
-		b = slices.Grow(b, int(atyp*4))
-		_, err := io.ReadFull(r, b)
-		if err != nil {
-			return nil, err
-		}
-		addr, _ := netip.AddrFromSlice(b)
-		dstAddr = addr.String()
-	case socks.AtypDomain:
-		length, err := r.ReadByte()
-		if err != nil {
-			return nil, err
-		}
-
-		b = make([]byte, length)
-		_, err = io.ReadFull(r, b)
-		if err != nil {
-			return nil, err
-		}
-
-		dstAddr = string(b)
-	default:
-		return nil, fmt.Errorf("Unsupported address type: %v", atyp)
-	}
-
-	b = make([]byte, 2)
-	_, err = io.ReadFull(r, b)
-	if err != nil {
-		return nil, err
-	}
-	dstPort := binary.BigEndian.Uint16(b)
-
-	return &SocksRequest{
-		cmd:     cmd,
-		atyp:    atyp,
-		dstAddr: dstAddr,
-		dstPort: dstPort,
-	}, nil
-}
-
-func handleRequest(conn net.Conn, req *SocksRequest) {
+func handleRequest(conn net.Conn, req *glimpse.Request) {
 	log.Printf("Handling %v", req.String())
 
-	if req.cmd != socks.CmdConnect {
-		log.Printf("Here")
-		err := sendErrorReply(conn, socks.ReplyCmdNotSupported)
+	if req.Cmd != socks.CmdConnect {
+		err := glimpse.SendErrorReply(conn, socks.ReplyCmdNotSupported)
 		if err != nil {
 			log.Printf("error sending reply: %v", err)
 		}
@@ -214,7 +111,7 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 	log.Printf("Connected to %v", remote.RemoteAddr().String())
 
 	addrPort, _ := netip.ParseAddrPort(remote.LocalAddr().String())
-	err = sendReply(conn, socks.ReplySuccess, addrPort)
+	err = glimpse.SendReply(conn, socks.ReplySuccess, addrPort)
 	if err != nil {
 		log.Printf("Error writing response: %v", err)
 		conn.Close()
@@ -246,7 +143,7 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 
-	req, err := readRequest(conn)
+	req, err := glimpse.ReadRequest(conn)
 	if err != nil {
 		log.Printf("Failed to handle request: %v", err)
 		conn.Close()
