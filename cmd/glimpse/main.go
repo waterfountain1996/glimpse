@@ -33,7 +33,11 @@ func (r *SocksRequest) String() string {
 	case socks.CmdUDPAssociate:
 		cmdString = "UDP ASSOCIATE"
 	}
-	return fmt.Sprintf("%v to %v:%v", cmdString, r.dstAddr, r.dstPort)
+	return fmt.Sprintf("%v to %v", cmdString, r.AddrPort())
+}
+
+func (r *SocksRequest) AddrPort() string {
+	return fmt.Sprintf("%v:%v", r.dstAddr, r.dstPort)
 }
 
 func sendReply(conn net.Conn, r socks.Reply, bndAddr netip.AddrPort) error {
@@ -200,7 +204,7 @@ func handleRequest(conn net.Conn, req *SocksRequest) {
 		conn.Close()
 	}
 
-	remote, err := net.Dial("tcp", fmt.Sprintf("%v:%v", req.dstAddr, req.dstPort))
+	remote, err := net.Dial("tcp", req.AddrPort())
 	if err != nil {
 		log.Printf("Failed to connect to remove addr: %v", err)
 		conn.Close()
