@@ -84,7 +84,7 @@ func handleAuth(conn net.Conn, methods []socks.AuthMethod) error {
 	if err != nil {
 		return err
 	} else if b != socks.Version {
-		return errors.New(fmt.Sprintf("Invalid SOCKS version: %v", b))
+		return fmt.Errorf("Invalid SOCKS version: %v", b)
 	}
 
 	// Read number of auth methods
@@ -139,7 +139,7 @@ func readRequest(conn net.Conn) (*SocksRequest, error) {
 
 	ver, cmd, atyp := b[0], socks.Cmd(b[1]), socks.Atyp(b[3])
 	if ver != socks.Version {
-		return nil, errors.New(fmt.Sprintf("Invalid SOCKS version: %v", b))
+		return nil, fmt.Errorf("Invalid SOCKS version: %v", b)
 	}
 
 	var dstAddr string
@@ -169,7 +169,7 @@ func readRequest(conn net.Conn) (*SocksRequest, error) {
 
 		dstAddr = string(b)
 	default:
-		return nil, errors.New(fmt.Sprintf("Unsupported address type: %v", atyp))
+		return nil, fmt.Errorf("Unsupported address type: %v", atyp)
 	}
 
 	b = make([]byte, 2)
