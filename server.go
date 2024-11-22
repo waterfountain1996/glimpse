@@ -29,6 +29,7 @@ const (
 )
 
 type server struct {
+	wg      sync.WaitGroup
 	bufPool sync.Pool
 }
 
@@ -52,7 +53,10 @@ func (s *server) Serve(ln net.Listener) error {
 			return err
 		}
 
+		s.wg.Add(1)
 		go func() {
+			defer s.wg.Done()
+
 			_ = s.serveClient(nc)
 		}()
 	}
@@ -175,6 +179,10 @@ func (s *server) getBuffer() []byte {
 
 func (s *server) putBuffer(buf []byte) {
 	s.bufPool.Put(buf)
+}
+
+func (s *server) Stop() {
+	s.wg.Wait()
 }
 
 func readMethodSelection(r *bufio.Reader) ([]byte, error) {
