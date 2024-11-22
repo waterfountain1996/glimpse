@@ -21,6 +21,9 @@ var zeroAddr = netip.AddrPortFrom(netip.IPv4Unspecified(), 0)
 var errInvalidRequest = errors.New("invalid request")
 
 const (
+	// Client authentication timeout.
+	authTimeout = 10 * time.Second
+
 	// Remote host dial timeout.
 	dialTimeout = 5 * time.Second
 
@@ -81,11 +84,12 @@ func (s *server) Serve(ln net.Listener) error {
 	}
 }
 
-// TODO: Add timeouts.
 func (s *server) serveClient(nc net.Conn) error {
 	defer nc.Close()
 
 	r := bufio.NewReader(nc)
+
+	_ = nc.SetDeadline(time.Now().Add(authTimeout))
 
 	methods, err := readMethodSelection(r)
 	if err != nil {
@@ -105,6 +109,9 @@ func (s *server) serveClient(nc net.Conn) error {
 	} else if cmd != cmdConnect {
 		return writeReply(nc, repCmdNotSupported, zeroAddr)
 	}
+
+	// Reset the timeout.
+	_ = nc.SetDeadline(time.Time{})
 
 	if err := s.handleConnect(unbufferConnReader(nc, r), dialAddr); err != nil {
 		return err
