@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"slices"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -22,12 +23,23 @@ var errInvalidRequest = errors.New("invalid request")
 const (
 	// Remote host dial timeout.
 	dialTimeout = 5 * time.Second
+
+	// Size of buffers used in io.CopyBuffer.
+	copyBufSize = 4096
 )
 
-type server struct{}
+type server struct {
+	bufPool sync.Pool
+}
 
 func newServer() *server {
-	return &server{}
+	return &server{
+		bufPool: sync.Pool{
+			New: func() any {
+				return make([]byte, copyBufSize)
+			},
+		},
+	}
 }
 
 func (s *server) Serve(ln net.Listener) error {
@@ -131,18 +143,23 @@ func (s *server) handleConnect(nc net.Conn, dialAddr string) error {
 	done := make(chan error, 2)
 	defer close(done)
 
-	// TODO: Add buffer pool for io.CopyBuffer.
 	go func() {
 		defer nc.Close()
 
-		_, err := io.Copy(nc, remote)
+		buf := s.getBuffer()
+		defer s.putBuffer(buf)
+
+		_, err := io.CopyBuffer(nc, remote, buf)
 		done <- err
 	}()
 
 	go func() {
 		defer remote.Close()
 
-		_, err := io.Copy(remote, nc)
+		buf := s.getBuffer()
+		defer s.putBuffer(buf)
+
+		_, err := io.CopyBuffer(remote, nc, buf)
 		done <- err
 	}()
 
@@ -150,6 +167,14 @@ func (s *server) handleConnect(nc net.Conn, dialAddr string) error {
 		<-done
 	}
 	return nil
+}
+
+func (s *server) getBuffer() []byte {
+	return s.bufPool.Get().([]byte)
+}
+
+func (s *server) putBuffer(buf []byte) {
+	s.bufPool.Put(buf)
 }
 
 func readMethodSelection(r *bufio.Reader) ([]byte, error) {
