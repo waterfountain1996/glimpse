@@ -29,12 +29,14 @@ const (
 )
 
 type server struct {
+	auth    []authenticator
 	wg      sync.WaitGroup
 	bufPool sync.Pool
 }
 
 func newServer() *server {
 	return &server{
+		auth: []authenticator{noAuth{}},
 		bufPool: sync.Pool{
 			New: func() any {
 				return make([]byte, copyBufSize)
@@ -73,15 +75,11 @@ func (s *server) serveClient(nc net.Conn) error {
 		return fmt.Errorf("error reading method selection message: %w", err)
 	}
 
-	// TODO: Add password auth.
-	am := methodNoAuth
-	if !slices.Contains(methods, am) {
-		am = methodInvalid
-	}
-	if err := writeAuthMethod(nc, am); err != nil {
-		return fmt.Errorf("auth method selection: %w", err)
-	} else if am == methodInvalid {
-		return nil
+	ok, err := s.authenticateClient(r, nc, methods)
+	if err != nil {
+		return fmt.Errorf("auth sub-negotiation error: %w", err)
+	} else if !ok {
+		return errors.New("unauthorized")
 	}
 
 	cmd, dialAddr, err := readRequest(r)
@@ -95,6 +93,22 @@ func (s *server) serveClient(nc net.Conn) error {
 		return err
 	}
 	return nil
+}
+
+func (s *server) authenticateClient(r *bufio.Reader, w io.Writer, methods []byte) (bool, error) {
+	var am authenticator = invalidAuth{}
+	for _, auth := range s.auth {
+		if slices.Contains(methods, auth.Method()) {
+			am = auth
+			break
+		}
+	}
+
+	if err := writeAuthMethod(w, am.Method()); err != nil {
+		return false, err
+	}
+
+	return am.Authenticate(r, w)
 }
 
 type connWrapper struct {
