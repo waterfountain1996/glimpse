@@ -76,7 +76,6 @@ func run(ctx context.Context, args []string) (int, error) {
 	}
 
 	log.Println("Shutting down...")
-	srv.Stop()
 
 	return 0, nil
 }

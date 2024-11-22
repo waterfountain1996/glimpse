@@ -29,7 +29,6 @@ func TestServer_Serve(t *testing.T) {
 		done      = make(chan error, 1)
 		remoteBuf bytes.Buffer
 	)
-	t.Cleanup(func() { srv.Stop() })
 	defer close(done)
 
 	// Start the proxy.
