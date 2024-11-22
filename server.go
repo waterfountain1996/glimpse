@@ -28,21 +28,38 @@ const (
 	copyBufSize = 4096
 )
 
+type serverOpt func(s *server)
+
+func withPasswordAuth(username, passwd string) serverOpt {
+	return func(s *server) {
+		s.auth = append(s.auth, &passwordAuth{
+			Username: username,
+			Password: passwd,
+		})
+	}
+}
+
 type server struct {
 	auth    []authenticator
 	wg      sync.WaitGroup
 	bufPool sync.Pool
 }
 
-func newServer() *server {
-	return &server{
-		auth: []authenticator{noAuth{}},
+func newServer(opts ...serverOpt) *server {
+	srv := &server{
 		bufPool: sync.Pool{
 			New: func() any {
 				return make([]byte, copyBufSize)
 			},
 		},
 	}
+	for _, f := range opts {
+		f(srv)
+	}
+	if len(srv.auth) == 0 {
+		srv.auth = []authenticator{noAuth{}}
+	}
+	return srv
 }
 
 func (s *server) Serve(ln net.Listener) error {
